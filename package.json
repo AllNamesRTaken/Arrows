@@ -1,0 +1,24 @@
+{
+  "name": "arrows",
+  "version": "1.0.0",
+  "description": "A simple tool to make web site tutorials with text and arrows.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "tutorials",
+    "arrows"
+  ],
+  "author": "Joel Brage",
+  "license": "ISC",
+  "dependencies": {
+    "goodcore": "^1.1.1"
+  },
+  "devDependencies": {
+    "vite": "^5.2.0"
+  }
+}
