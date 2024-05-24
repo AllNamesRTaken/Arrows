@@ -1,7 +1,10 @@
+export const STANDARD_EXIT = "standard";
+export const ESCAPE_EXIT = "escape";
+export const FINISHED_EXIT = "finished";
+
 export default class Configurable {
     config = {
-        escapeToExit: true,
-        exitFn: null,
+        onExit: async (result) => null,
     };
     isShowing = false;
 
@@ -39,8 +42,8 @@ export default class Configurable {
     }
     exit(result) {
         this._cleanup();
-        if (this.config.exitFn) {
-            this.config.exitFn(result);
+        if (this.config.onExit) {
+            this.config.onExit(result);
         }
         if (this.exitResolver) {
             var resolver = this.exitResolver;
@@ -62,7 +65,7 @@ export default class Configurable {
 
     onExit(fn) {
         if (fn) {
-            this._setConfig("exitFn", fn);
+            this._setConfig("onExit", fn);
         }
         this.exitPromise = this._createExitPromise();
         return this.exitPromise;

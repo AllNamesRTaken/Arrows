@@ -1,4 +1,4 @@
-import Configurable from "./configurable";
+import {default as Configurable, STANDARD_EXIT, ESCAPE_EXIT, FINISHED_EXIT} from "./configurable";
 import { debounce } from "goodcore/Util";
 import { isElementVisible } from "./util";
 import { findAll } from "goodcore/Dom";
@@ -19,7 +19,10 @@ export default class Arrows extends Configurable {
         exitFn: null,
         overlayId: "infooverlay",
         scrollIntoView: true,
+        onExit: async ({exitReason, progress}) => null,
+        onProgress: async ({progress}) => null,
     };
+    originalQuiver = []
     styled = false;
     exitPromise = null;
     exitResolver = null;
@@ -29,6 +32,7 @@ export default class Arrows extends Configurable {
     arrows = {};
     forceRedraw = false;
     disableAnimationTime = false;
+    noReset = false;
     partialCover = {
         top: null,
         left: null,
@@ -43,18 +47,14 @@ export default class Arrows extends Configurable {
 
         /* Public methods */
     
-        add(id, text, targetElement, forceNext) {
+        add(id, text, targetElement) {
             this._validateId(id);
-    
-            if (!forceNext) {
-                this.future.push([id, text, targetElement]);
-                return this;
-            }
-            this._show(id, text, targetElement);
+            this.future.push([id, text, targetElement]);
+            return this;
         }
     
         clear() {
-            this.init(true);
+            this.reset(true);
         }
 
         async draw(id, text, targetElement) {
@@ -62,43 +62,36 @@ export default class Arrows extends Configurable {
             return this._drawArrow(id, text, targetElement);
         }
 
-        init(empty) {
-            this._removeShadowing();
-            this._createAndAttachInfoOverlay(this.config.overlayId ?? null, true);
-            this._addCssClassToStyleSheet();
-            var future = [];
-            if (this.past && !empty) future = [...this.past];
-            if (this.current && !empty) future.push(this.current);
-            if (this.future && !empty) future = [...future, ...this.future];
-            this.past = [];
-            this.current = null;
-            this.future = future;
-            this._clearArrows();
-            this.forceRedraw = false;
-            this.isShowing = true;
+        getProgress() {
+            return this.past.length + (this.current ? 1 : 0);
         }
 
-        load(quiver) {
+        load(quiver, progress = 0) {
             if ("string" === typeof quiver) {
                 quiver = JSON.parse(quiver);
             }
+            this.originalQuiver = quiver.slice();
             if(quiver && quiver.length > 0) {
                 this.future = quiver.slice();
             }
+            this.past = this.future.splice(0, progress);
+            this.current = null;
+            this.noReset = true;
             return this;
         }
 
         next() {
             if (this.future.length > 0) {
                 if (this.config.mode === "single") {
-                    this.add(...this.future.shift(), true);
+                    this._show(...this.future.shift());
                 } else {
                     while (this.future.length > 0) {
-                        this.add(...this.future.shift(), true);
+                        this._show(...this.future.shift());
                     }
                 }
+                this.config.onProgress({progress: this.getProgress() - 1});
             } else {
-                this.exit();
+                this.exit({ exitReason: FINISHED_EXIT });
             }
         }
     
@@ -107,16 +100,41 @@ export default class Arrows extends Configurable {
                 if (this.past.length > 0) {
                     this.future.unshift(this.current);
                     this.current = null;
-                    this.add(...this.past.pop(), true);
+                    this._show(...this.past.pop());
+                    this.config.onProgress({progress: this.getProgress()  - 1});
                 }
             }
-        }    
+        }
     
-        run(quiver) {
-            this.load(quiver);
-            this.init();
+        reset(empty) {
+            this._removeShadowing();
+            this._createAndAttachInfoOverlay(this.config.overlayId ?? null, true);
+            this._addCssClassToStyleSheet();
+            if(!this.noReset) {
+                var future = [];
+                if (this.past && !empty) future = [...this.past];
+                if (this.current && !empty) future.push(this.current);
+                if (this.future && !empty) future = [...future, ...this.future];
+                this.past = [];
+                this.current = null;
+                this.future = future;
+            } else {
+                this.noReset = false;
+            }
+            this._clearArrows();
+            this.forceRedraw = false;
+            this.isShowing = true;
+        }
+
+        fire() {
+            this.reset();
             this.next();
             return this.onExit();
+        }
+
+        exit({exitReason} = { exitReason: STANDARD_EXIT }) {
+            const progress = this.getProgress() - 1;
+            super.exit({ exitReason, progress });
         }
 
         /* Private methods */
@@ -498,7 +516,7 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
         switch (event.key) {
             case "Escape":
                 if (this.config.escapeToExit) {
-                    this.exit();
+                    this.exit({exitReason: ESCAPE_EXIT});
                 }
                 break;
             case " ":
@@ -607,6 +625,8 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
     }
 
     async _show(id, text, targetElement) {
+        this._validateId(id);
+
         if ("string" === typeof targetElement) {
             targetElement = document.querySelector(targetElement);
         }
@@ -819,9 +839,9 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
         super._cleanup();
         this._clearArrows();
         this._removeShadowing();
-        var future = [];
-        this.past = [];
-        this.current = null;
+        // var future = [];
+        // this.past = [];
+        // this.current = null;
         this._removeInfoOverlay();
     }
 

@@ -1,4 +1,4 @@
-import Configurable from "./configurable";
+import {default as Configurable, STANDARD_EXIT, ESCAPE_EXIT, FINISHED_EXIT} from "./configurable";
 import { debounce } from "goodcore/Util";
 import { find, findAll, get, is, findParent } from "goodcore/Dom";
 import Arrows from "./arrows";
@@ -7,7 +7,8 @@ export default class Fletcher extends Configurable {
     config = {
         escapeToExit: true,
         selector: "[id]",
-        exitFn: null,
+        onExit: async ({exitReason, progress, quiver}) => null,
+        onProgress: async ({progress, quiver}) => null,
     };
     exitPromise = null;
     exitResolver = null;
@@ -34,9 +35,9 @@ export default class Fletcher extends Configurable {
 
     /* Public Methods */
 
-    exit() {
+    exit({exitReason} = {exitReason: STANDARD_EXIT}) {
         console.log(JSON.stringify(this.quiver).replaceAll('\\', '\\\\'));
-        super.exit(this.quiver);
+        super.exit({exitReason, progress: this.quiverIndex, quiver: this.quiver});
         this.arrows.exit();
         document.body.classList.remove("fletchered");
     }
@@ -53,6 +54,7 @@ export default class Fletcher extends Configurable {
             return;
         }
         this.quiverIndex++;
+        this.config.onProgress({progress: this.quiverIndex, quiver: this.quiver});
         this._showArrow(...this.quiver[this.quiverIndex]);
     }
 
@@ -61,12 +63,13 @@ export default class Fletcher extends Configurable {
             return;
         }
         this.quiverIndex--;
+        this.config.onProgress({progress: this.quiverIndex, quiver: this.quiver});
         this._showArrow(...this.quiver[this.quiverIndex]);
     }
 
-    run(quiver) {
+    createArrows(quiver) {
         this.init();
-        this.arrows.init();
+        this.arrows.reset();
         this.isShowing = true;
         if (quiver) {
             this._load(quiver);
@@ -220,8 +223,10 @@ export default class Fletcher extends Configurable {
         const index = this.quiver.findIndex((x) => x[0] === id);
         if (index > -1) {
             this.quiver[index] = [id, text, "#" + el.id];
+            this.config.onProgress({progress: index, quiver: this.quiver});
         } else {
             this.quiverIndex = this.quiver.push([id, text, "#" + el.id]) - 1;
+            this.config.onProgress({progress: this.quiver.length - 1, quiver: this.quiver});
         }
     });
     _clearSelection() {

@@ -3,13 +3,13 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
   build: {
-    minify: 'esbuild',
+    minify: 'none',
     lib: {
       // Could also be a dictionary or array of multiple entry points
       entry: resolve(__dirname, 'index.js'),
-      name: 'Arrows',
+      name: 'Archer',
       // the proper extensions will be added
-      fileName: 'Arrows',
+      fileName: 'Archer',
       formats: ['es', 'umd', 'iife'],
     },
     rollupOptions: {
