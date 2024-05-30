@@ -24,7 +24,9 @@ export default class Archer extends Configurable {
         onEscape: async ({progress, archer}) => false,
         arrowsConfig: {},
         fletcherConfig: {},
+        storePreparation: false,
     };
+    mission = "default";
     goblin = null;
 
     get quiver() { 
@@ -33,31 +35,53 @@ export default class Archer extends Configurable {
     get originalQuiver() { 
         return this.arrows.originalQuiver;
     }
+    get progress() {
+        return this.arrows.getProgress();
+    }
     _summonSidekick() {
         this.goblin ??= getMonster({
             name: this.config.name,
             localStorage: true,
-            defaults: { progress: {}, quivers: {}, enabled: true },
+            defaults: { targets: {}, enabled: true },
         });
         return this.goblin;
     }
-    async run() {
+
+    async prepare(quiver, mission = "default", progress = 0) {
+        await this._storeMission({quiver, mission, progress});
+        this.load(quiver, progress);
+        return this;
+    }
+    async _storeMission({target = null, quiver, progress = 0, mission = "default"}) {
+        target ??= await this.config.spotFn();
+        let {targets, missions} = await this.getMission(mission, target);
+        missions ??= [];
+        targets ??= {};
+        targets[target] = missions;
+        let missionData = missions.find(data => data.mission === mission);
+        if (!missionData) {
+            missionData = { mission };
+            missions.push(missionData);
+        }
+        missionData.quiver = quiver;
+        missionData.progress = progress;
         const goblin = this._summonSidekick();
-        const progresses = goblin.getCookie("progress");
-        const quivers = goblin.getCookie("quivers");
-        const areEnabled = goblin.getCookie("enabled");
-        var target = await this.config.spotFn();
+        goblin.setCookie("targets", clone(targets));
+    }
+
+    async run(mission = "default") {
+        const target = await this.config.spotFn();
+        const {targets, missions, quiver, progress: startProgress} = await this.getMission(mission, target);
+        if (!quiver) {
+            throw new Error(`No quiver found for mission ${mission} on target ${target}`);
+        }
         window.addEventListener("beforeunload", () => {
-            const progress = this.arrows.getProgress();
-            this.storeQuiver(target, quivers[target], progress);
+            const progress = this.arrows.getProgress(mission, target);
+            this.setProgress(progress, mission, target);
         });
-        if (
-            target in quivers &&
-            areEnabled &&
-            progresses[target] < quivers[target].length - 1
-        ) {
+        if (await this.hasUnfinishedBusiness(mission, target)) {
             let show = true;
-            if (progresses[target] === 0) {
+            if (startProgress === 0) {
                 show = await this.config.tutorialFn();
             } else {
                 show = await this.config.continueFn();
@@ -65,73 +89,130 @@ export default class Archer extends Configurable {
             if (!show) {
                 return;
             }
-            let { exitReason, progress } = await this.arrows
+            this.mission = mission;
+            let { progress } = await this.arrows
                 .configure({
                     ...{
-                        onExit: ({exitReason, progress}) => this.config.onExit({exitReason, progress, archer: this}),
-                        onProgress: ({progress}) => this.config.onProgress({progress, archer: this}),
+                        onExit: async ({exitReason, progress}) => {
+                            await this.setProgress(progress, mission, target);
+                            await this.config.onExit({exitReason, progress, archer: this})
+                        },
+                        onProgress: async ({progress}) => {
+                            await this.setProgress(progress, mission, target);
+                            await this.config.onProgress({progress, archer: this})
+                        },
+                        onEscape: async ({progress, arrows}) => {
+                            return this.config.onEscape( {progress, archer: this})
+                        },
                     },
                     ...this.config.arrowsConfig,
                 })
-                .load(quivers[target], progresses[target])
+                .load(quiver, startProgress)
                 .fire();
-            if (exitReason === "escape") {
-                const continueLater = await this.config.onEscape({progress, archer: this});
-                if (!continueLater) {
-                    progress = quivers[target].length;
-                }
-            }
-            this.storeQuiver(target, quivers[target], progress)
+            this.setProgress(progress, mission, target)
         }
     }
-    async storeQuiver(target, quiver, progress = 0) {
-        if (!target) {
-            throw new Error("No target provided");
-        }
-        const goblin = this._summonSidekick();
-        const quivers = goblin.getCookie("quivers");
-        const progresses = goblin.getCookie("progress");
-        progresses[target] = progress;
-        quivers[target] = quiver;
-        goblin.setCookie("quivers", clone(quivers));
-        goblin.setCookie("progress", clone(progresses));
-        // goblin.setCookie("enabled", true);
+
+    async hasMissions(target = null) {
+        const {missions} = await this.getMission("default", target);
+        return !!missions;
     }
-    async prepare() {
+
+    async getMissions(target = null) {
+        const {missions} = await this.getMission("default", target);
+        return missions || [];
+    }
+
+    async hasMission(mission = "default", target = null) {
+        const {missions} = await this.getMission(mission, target);
+        return !!missions.find(m => m.mission === mission);
+    }
+
+    async hasUnfinishedBusiness(mission, target) {
+        mission ??= "default";
+        const {quiver, progress} = await this.getMission(mission, target);
+        return !progress || progress < quiver.length;
+    }
+
+    load(quiver, progress = 0) {
+        return this.arrows.load(quiver, progress);
+    }
+
+    async createArrows() {
         const { exitReason, progress, quiver } = await this.fletcher.configure(this.config.fletcherConfig).createArrows();
-        const goblin = this._summonSidekick();
-        if (quiver?.length) {
-            const target = await this.config.spotFn();
-            await this.storeQuiver(target, quiver);
-        }
+        this.load(quiver, progress);
         return this;
     }
-    async getProgress() {
-        const target = await this.config.spotFn();
-        const goblin = this._summonSidekick();
-        const progresses = goblin.getCookie("progress");
-        return progresses[target] ?? 0;
-    }
-
-    async reset(target) {
-        await this.setProgress(0, target);
-        return this;
-    }
-
-    async setProgress(progress = 0, target) {
+    async getMission(mission = null, target = null) {
+        mission ??= this.mission || "default";
         target ??= await this.config.spotFn();
         const goblin = this._summonSidekick();
-        const progresses = goblin.getCookie("progress");
-        progresses[target] = progress;
-        goblin.setCookie("progress", progresses);
-        this.config.onReset({progress, archer: this, target});
+        const targets = goblin.getCookie("targets");
+        const missions = targets && targets[target] || null;
+        const {quiver, progress} = missions && missions.find(data => data.mission === mission) || {quiver: null, progress: 0};
+        return {targets, missions, quiver, progress};
+    }
+    async getProgress(mission, target = null) {
+        mission ??= this.mission || "default";
+        if (mission === this.mission) {
+            return this.progress;
+        }
+        const {progress} = await this.getMission(mission, target);
+        return progress;
+    }
+
+    async reset(mission, target) {
+        await this.setProgress(0, mission, target);
+        await this.config.onReset({progress: 0, archer: this, target});
         return this;
+    }
+
+    async setProgress(progress = 0, mission = null, target = null) {
+        mission ??= this.mission || "default";
+        target ??= await this.config.spotFn();
+        const {targets, missions} = await this.getMission(mission, target);
+        const missionData = missions.find(m => m.mission === mission);
+        if(!missionData) {
+            throw new Error(`Mission ${mission} not found on target ${target}`);
+        }
+        missionData.progress = progress;
+        const goblin = this._summonSidekick();
+        goblin.setCookie("targets", targets);
+        await this.arrows.setProgress(progress);
+        return this;
+    }
+    async removeAllTargets() {
+        const goblin = this._summonSidekick();
+        goblin.removeCookies("targets");
+    }
+    async removeTarget(target = null) {
+        target ??= await this.config.spotFn();
+        const {targets} = await this.getMission("default", target);
+        if (!targets) {
+            return;
+        }
+        delete targets[target];
+        const goblin = this._summonSidekick();
+        goblin.setCookie("targets", targets);
+    }
+    async removeMission(mission = "default", target = null) {
+        target ??= await this.config.spotFn();
+        const {targets, missions} = await this.getMission(mission, target);
+        if (!missions) {
+            return;
+        }
+        const goblin = this._summonSidekick();
+        delete missions[mission];
+        goblin.setCookie("targets", targets);
     }
 
     static #instance = null;
     static get instance() {
         Archer.#instance ??= new Archer();
         return Archer.#instance;
+    }
+    static get hero() {
+        return Archer.instance;
     }
 }
 

@@ -55,7 +55,7 @@ export default class Fletcher extends Configurable {
         }
         this.quiverIndex++;
         this.config.onProgress({progress: this.quiverIndex, quiver: this.quiver});
-        this._showArrow(...this.quiver[this.quiverIndex]);
+        this._showArrow(this.quiver[this.quiverIndex]);
     }
 
     previous() {
@@ -64,7 +64,7 @@ export default class Fletcher extends Configurable {
         }
         this.quiverIndex--;
         this.config.onProgress({progress: this.quiverIndex, quiver: this.quiver});
-        this._showArrow(...this.quiver[this.quiverIndex]);
+        this._showArrow(this.quiver[this.quiverIndex]);
     }
 
     createArrows(quiver) {
@@ -73,7 +73,7 @@ export default class Fletcher extends Configurable {
         this.isShowing = true;
         if (quiver) {
             this._load(quiver);
-            this._showArrow(...this.quiver[this.quiverIndex]);
+            this._showArrow(this.quiver[this.quiverIndex]);
         }
         return this.onExit();
     }
@@ -164,20 +164,18 @@ export default class Fletcher extends Configurable {
         firstSheet.insertRule(selectableRule, 0);
     }
     async _selectElement(event) {
-        const el = this._detectElement(event);
-        if (el) {
-            await this._showArrow(null, null, el);
+        const target = this._detectElement(event);
+        if (target) {
+            await this._showArrow({id: null, text: null, target});
         }
-        this.selected = el;
+        this.selected = target;
     }
-    async _showArrow(id, text, el) {
-        if ("string" === typeof el) {
-            el = find(el);
-        }
+    async _showArrow({id, text, target}) {
+        const el = Arrows.asElement(target);
         this.currentId = id ??= `text${Object.keys(this.quiver).length}`;
         this.currentText = text ??= "Click to Edit\nCtrl+S to save";
         await this._highlightElement(el);
-        await this.arrows.draw(this.currentId, this.currentText, el);
+        await this.arrows.draw({id: this.currentId, text: this.currentText, target});
         this._makeTextEditable(id, el);
     }
     _makeTextEditable(id, el) {
@@ -191,7 +189,7 @@ export default class Fletcher extends Configurable {
         }));
         textEl.addEventListener("keydown", (event) => {
             if (event.ctrlKey && event.key === "s") {
-                this._save(this.currentId, this.currentText, el);
+                this._save({id: this.currentId, text: this.currentText, target: el});
                 event.preventDefault();
                 event.stopPropagation();
             }
@@ -219,13 +217,14 @@ export default class Fletcher extends Configurable {
         findAll('.fletcher-selected').forEach(x => x.classList.remove("fletcher-selected"));
         el.classList.add("fletcher-selected");
     }
-    _save = debounce((id, text, el) => {
+    _save = debounce(({id, text, target}) => {
         const index = this.quiver.findIndex((x) => x[0] === id);
+        target = Arrows.asSelector(target)
         if (index > -1) {
-            this.quiver[index] = [id, text, "#" + el.id];
+            this.quiver[index] = {id, text, target};
             this.config.onProgress({progress: index, quiver: this.quiver});
         } else {
-            this.quiverIndex = this.quiver.push([id, text, "#" + el.id]) - 1;
+            this.quiverIndex = this.quiver.push({id, text, target}) - 1;
             this.config.onProgress({progress: this.quiver.length - 1, quiver: this.quiver});
         }
     });
@@ -246,9 +245,6 @@ export default class Fletcher extends Configurable {
         }
         this.quiver = quiver;
         this.quiverIndex = 0;
-    }
-    _nextEl(el) {
-        return findParent(el, selector);
     }
     _cleanup() {
         super._cleanup();

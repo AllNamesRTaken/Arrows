@@ -1,7 +1,13 @@
-import {default as Configurable, STANDARD_EXIT, ESCAPE_EXIT, FINISHED_EXIT} from "./configurable";
+import {
+    default as Configurable,
+    STANDARD_EXIT,
+    ESCAPE_EXIT,
+    FINISHED_EXIT,
+    ERROR_EXIT,
+} from "./configurable";
 import { debounce } from "goodcore/Util";
 import { isElementVisible } from "./util";
-import { findAll } from "goodcore/Dom";
+import { findAll, find } from "goodcore/Dom";
 
 export default class Arrows extends Configurable {
     config = {
@@ -19,10 +25,11 @@ export default class Arrows extends Configurable {
         exitFn: null,
         overlayId: "infooverlay",
         scrollIntoView: true,
-        onExit: async ({exitReason, progress}) => null,
-        onProgress: async ({progress}) => null,
+        onExit: async ({ exitReason, progress }) => null,
+        onProgress: async ({ progress }) => null,
+        onEscape: async ({ progress, arrows }) => null,
     };
-    originalQuiver = []
+    originalQuiver = [];
     styled = false;
     exitPromise = null;
     exitResolver = null;
@@ -45,101 +52,144 @@ export default class Arrows extends Configurable {
         this._addKeyListeners();
     }
 
-        /* Public methods */
-    
-        add(id, text, targetElement) {
-            this._validateId(id);
-            this.future.push([id, text, targetElement]);
-            return this;
-        }
-    
-        clear() {
-            this.reset(true);
-        }
+    /* Public methods */
 
-        async draw(id, text, targetElement) {
-            await this._prepDraw(id, targetElement);
-            return this._drawArrow(id, text, targetElement);
-        }
+    add({ id, text, target }) {
+        this._validateId(id);
+        this.future.push({ id, text, target });
+        return this;
+    }
 
-        getProgress() {
-            return this.past.length + (this.current ? 1 : 0);
-        }
+    clear() {
+        this.reset(true);
+    }
 
-        load(quiver, progress = 0) {
-            if ("string" === typeof quiver) {
-                quiver = JSON.parse(quiver);
-            }
-            this.originalQuiver = quiver.slice();
-            if(quiver && quiver.length > 0) {
-                this.future = quiver.slice();
-            }
-            this.past = this.future.splice(0, progress);
-            this.current = null;
-            this.noReset = true;
-            return this;
-        }
+    async draw({ id, text, target }) {
+        await this._prepDraw(id, target);
+        return this._drawArrow({ id, text, target });
+    }
 
-        next() {
-            if (this.future.length > 0) {
-                if (this.config.mode === "single") {
-                    this._show(...this.future.shift());
-                } else {
-                    while (this.future.length > 0) {
-                        this._show(...this.future.shift());
-                    }
-                }
-                this.config.onProgress({progress: this.getProgress() - 1});
-            } else {
-                this.exit({ exitReason: FINISHED_EXIT });
-            }
+    getProgress() {
+        return this.past.length;
+    }
+    async setProgress(progress) {
+        progress = Math.min(this.originalQuiver?.length ?? 0, Math.max(0, progress));
+        if (progress === this.getProgress()) {
+            return;
         }
-    
-        previous() {
+        this.future = this.originalQuiver.slice();
+        this.past = this.future.splice(0, progress);
+        this.current = null;
+        if (this.isShowing) {
+            await this.next();
+        }
+    }
+
+    load(quiver, progress = 0) {
+        if ("string" === typeof quiver) {
+            quiver = JSON.parse(quiver);
+        }
+        this.originalQuiver = quiver.slice();
+        if (quiver && quiver.length > 0) {
+            this.future = quiver.slice();
+        }
+        this.past = this.future.splice(0, progress);
+        this.current = null;
+        this.noReset = true;
+        return this;
+    }
+
+    async next() {
+        if (this.future.length > 0) {
             if (this.config.mode === "single") {
-                if (this.past.length > 0) {
-                    this.future.unshift(this.current);
-                    this.current = null;
-                    this._show(...this.past.pop());
-                    this.config.onProgress({progress: this.getProgress()  - 1});
+                if (!(await this._show(this.future.shift()))){
+                    console.warn("Unable to show arrow")
+                    await this.exit({ exitReason: ERROR_EXIT });
+                    return;
+                }
+            } else {
+                while (this.future.length > 0) {
+                    this._show(this.future.shift());
                 }
             }
-        }
-    
-        reset(empty) {
-            this._removeShadowing();
-            this._createAndAttachInfoOverlay(this.config.overlayId ?? null, true);
-            this._addCssClassToStyleSheet();
-            if(!this.noReset) {
-                var future = [];
-                if (this.past && !empty) future = [...this.past];
-                if (this.current && !empty) future.push(this.current);
-                if (this.future && !empty) future = [...future, ...this.future];
-                this.past = [];
+            await this.config.onProgress({ progress: this.getProgress() });
+        } else {
+            if (this.current) {
+                this.past.push(this.current);
                 this.current = null;
-                this.future = future;
-            } else {
-                this.noReset = false;
             }
-            this._clearArrows();
-            this.forceRedraw = false;
-            this.isShowing = true;
+            await this.exit({ exitReason: FINISHED_EXIT });
         }
+    }
 
-        fire() {
-            this.reset();
-            this.next();
-            return this.onExit();
+    async previous() {
+        if (this.config.mode === "single") {
+            if (this.past.length > 0) {
+                this.future.unshift(this.current);
+                this.current = null;
+                await this._show(this.past.pop());
+                await this.config.onProgress({ progress: this.getProgress() });
+            }
         }
+    }
 
-        exit({exitReason} = { exitReason: STANDARD_EXIT }) {
-            const progress = this.getProgress() - 1;
-            super.exit({ exitReason, progress });
+    skipToEnd() {
+        if(this.current) {
+            this.past.push(this.current);
+            this.current = null;
         }
+        if(this.future.length > 0) {
+            this.past = [...this.past, ...this.future];
+            this.future = [];
+        }
+    }
 
-        /* Private methods */
+    reset(empty) {
+        this._removeShadowing();
+        this._createAndAttachInfoOverlay(this.config.overlayId ?? null, true);
+        this._addCssClassToStyleSheet();
+        if (!this.noReset) {
+            var future = [];
+            if (this.past && !empty) future = [...this.past];
+            if (this.current && !empty) future.push(this.current);
+            if (this.future && !empty) future = [...future, ...this.future];
+            this.past = [];
+            this.current = null;
+            this.future = future;
+        } else {
+            this.noReset = false;
+        }
+        this._clearArrows();
+        this.forceRedraw = false;
+    }
 
-        
+    async fire() {
+        this.reset();
+        this.isShowing = true;
+        await this.next();
+        return this.onExit();
+    }
+
+    async exit({ exitReason } = { exitReason: STANDARD_EXIT }) {
+        this._cleanup();
+        if (exitReason === ESCAPE_EXIT) {
+            if (!(this.config.onEscape && await this.config.onEscape({ progress: this.getProgress(), arrows: this }))) {
+                this.skipToEnd();
+            }
+        }
+        const progress = this.getProgress();
+        await super.exit({ exitReason, progress });
+    }
+
+    static asElement(target) {
+        return "string" === typeof target ? find(target) : target;
+    }
+    static asSelector(target) {
+        return "string" === typeof target ? target : `#${target.id}`;
+    }
+
+    /* Private methods */
+
     _appendPartialCover(overlay) {
         if (this.config.overlayType !== "partial") {
             return;
@@ -516,7 +566,7 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
         switch (event.key) {
             case "Escape":
                 if (this.config.escapeToExit) {
-                    this.exit({exitReason: ESCAPE_EXIT});
+                    this.exit({ exitReason: ESCAPE_EXIT });
                 }
                 break;
             case " ":
@@ -624,37 +674,47 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
         Object.keys(this.arrows).forEach((id) => this._removeArrow(id));
     }
 
-    async _show(id, text, targetElement) {
+    async _show({ id, text, target }) {
         this._validateId(id);
 
-        if ("string" === typeof targetElement) {
-            targetElement = document.querySelector(targetElement);
+        target = Arrows.asSelector(target);
+        this._validateId(target);
+        if (!Dom.find(target)){
+            console.warn(`Target ${target} not found`)
+            return false;
         }
 
         if (this.current) {
             this.past.push(this.current);
         }
-        this.current = [id, text, targetElement];
+        this.current = { id, text, target };
 
-        return this.draw(...this.current);
+        return this.draw(this.current);
     }
     async _scrollIntoView(targetElement) {
         if (!this.config.scrollIntoView) {
             return;
         }
         let [overlay, _] = this._getOverlay();
-        const covers = [overlay, ...findAll('.cover')];
-        const settings = covers.map(el => ({el, pointerEvents: el.style.pointerEvents}));
-        covers.forEach((el) => el.style.pointerEvents = "none")
+        const covers = [overlay, ...findAll(".cover")];
+        const settings = covers.map((el) => ({
+            el,
+            pointerEvents: el.style.pointerEvents,
+        }));
+        covers.forEach((el) => (el.style.pointerEvents = "none"));
         let isVisible = isElementVisible(targetElement, true);
-        settings.forEach((s) => s.el.style.pointerEvents = s.pointerEvents);
+        settings.forEach((s) => (s.el.style.pointerEvents = s.pointerEvents));
         if (!isVisible) {
             await new Promise((resolve) => {
-                targetElement.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+                targetElement.scrollIntoView({
+                    behavior: "smooth",
+                    block: "center",
+                    inline: "center",
+                });
                 setTimeout(() => {
                     resolve();
                 }, 500);
-            })
+            });
         }
     }
 
@@ -689,7 +749,8 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
         }
     }
 
-    async _prepDraw(id, targetElement) {
+    async _prepDraw(id, target) {
+        const targetElement = Arrows.asElement(target);
         const [_, canvas] = this._getOverlay(true);
 
         // Clear out colliding arrows
@@ -702,15 +763,16 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
 
         await this._scrollIntoView(targetElement);
 
-
         if (this.forceRedraw) {
             // Redraw old arrows if showing multiple
             this._redraw(canvas);
         }
     }
 
-    async _drawArrow(id, text, targetElement) {
+    async _drawArrow({ id, text, target }) {
         const [overlay, canvas] = this._getOverlay(true);
+
+        const targetElement = Arrows.asElement(target);
 
         // Step 1: Find the center and dimensions of the target element
         const [targetSize, targetMidpoint] =
@@ -721,9 +783,9 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
         if (
             this.config.mode === "single" &&
             this.current &&
-            id !== this.current[0]
+            id !== this.current.id
         ) {
-            return;
+            return false;
         }
 
         // Step 2: Create text element
@@ -775,6 +837,7 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
                 positiveCurvature
             );
         }
+        return true;
     }
 
     async _moveFocusToTarget(targetSize, targetMidpoint) {
@@ -839,9 +902,6 @@ fill-opacity="${this.config.maskOpacity}" mask="url(#circles_mask)"></rect>
         super._cleanup();
         this._clearArrows();
         this._removeShadowing();
-        // var future = [];
-        // this.past = [];
-        // this.current = null;
         this._removeInfoOverlay();
     }
 

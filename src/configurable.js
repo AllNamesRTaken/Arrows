@@ -1,6 +1,7 @@
 export const STANDARD_EXIT = "standard";
 export const ESCAPE_EXIT = "escape";
 export const FINISHED_EXIT = "finished";
+export const ERROR_EXIT = "error";
 
 export default class Configurable {
     config = {
@@ -40,10 +41,10 @@ export default class Configurable {
     _cleanup() {
         this.isShowing = false;
     }
-    exit(result) {
+    async exit(result) {
         this._cleanup();
         if (this.config.onExit) {
-            this.config.onExit(result);
+            await this.config.onExit(result);
         }
         if (this.exitResolver) {
             var resolver = this.exitResolver;
